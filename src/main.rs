@@ -83,21 +83,6 @@ pub const RPC: &str = "https://arb-mainnet.g.alchemy.com/v2/a3gddyg-QZsrorLULTsv
 
 #[tokio::main]
 async fn main() {
-    log("Начало работы!".to_string(), None);
-    let wallets = match read_privates("./privates.txt") {
-        Ok(wallets) => wallets,
-        Err(err) => {
-            log(format!("Не удалось прочитать приватники: {:?}", err), None);
-            process::exit(0x0100);
-        }
-    };
-    retry(wallets).await;
-    log("Завершение работы..".to_string(), None);
-}
-
-async fn send_testnet(wallet: &Wallet<SigningKey>) -> Result<(), Box<dyn Error>> {
-    let client = Provider::<Http>::try_from(RPC)?;
-    let client = Arc::new(client);
     let book: ChainBook = ChainBook {
         quoter: "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
             .parse::<Address>()
@@ -120,6 +105,21 @@ async fn send_testnet(wallet: &Wallet<SigningKey>) -> Result<(), Box<dyn Error>>
         scan: String::from("https://arbiscan.io/"),
         pre_defined_gas: U256::from_str("2000000").unwrap(),
     };
+    log("Начало работы!".to_string(), None);
+    let wallets = match read_privates("./privates.txt") {
+        Ok(wallets) => wallets,
+        Err(err) => {
+            log(format!("Не удалось прочитать приватники: {:?}", err), None);
+            process::exit(0x0100);
+        }
+    };
+    retry(wallets, &book).await;
+    log("Завершение работы..".to_string(), None);
+}
+
+async fn send_testnet(wallet: &Wallet<SigningKey>, book: &ChainBook) -> Result<(), Box<dyn Error>> {
+    let client = Provider::<Http>::try_from(RPC)?;
+    let client = Arc::new(client);
     let quoter_address = book.quoter.clone();
     let quote = Quoter::new(quoter_address, Arc::clone(&client));
     let token_in = book.token_in.clone();
@@ -268,11 +268,11 @@ async fn send_testnet(wallet: &Wallet<SigningKey>) -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
-async fn retry(wallets: Vec<Wallet<SigningKey>>) {
+async fn retry<'a>(wallets: Vec<Wallet<SigningKey>>, book: &'a ChainBook) {
     const N_ATTEMPTS: u8 = 3;
     for wallet in wallets {
         for _ in 0..N_ATTEMPTS {
-            match send_testnet(&wallet).await {
+            match send_testnet(&wallet, &book).await {
                 Ok(()) => {
                     sleeping(None).await;
                     break;
