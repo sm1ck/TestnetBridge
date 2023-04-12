@@ -1,0 +1,337 @@
+use colored::Colorize;
+use ethers::abi::Token;
+use ethers::contract::abigen;
+use ethers::prelude::*;
+use ethers::types::transaction::eip2718::TypedTransaction;
+use ethers::types::transaction::eip2930::AccessList;
+use ethers::types::U256;
+use ethers::utils::parse_ether;
+use k256::ecdsa::SigningKey;
+use rand::Rng;
+use rand::SeedableRng;
+use rand_pcg::Pcg32;
+use std::collections::HashMap;
+use std::error::Error;
+use std::fmt;
+use std::process;
+use std::str::FromStr;
+use std::sync::Arc;
+use tokio::time::{sleep, Duration};
+
+abigen!(
+    Quoter,
+    r#"[
+        function quoteExactInputSingle(address tokenIn, address tokenOut, uint24 fee, uint256 amountIn, uint160 sqrtPriceLimitX96) public override returns (uint256 amountOut)
+    ]"#,
+);
+abigen!(
+    Router,
+    r#"[
+        struct lzTxObj { uint256 dstGasForCall; uint256 dstNativeAmount; bytes dstNativeAddr; }
+        function quoteLayerZeroFee(uint16 _dstChainId, uint8 _functionType, bytes calldata _toAddress, bytes calldata _transferAndCallPayload, Router.lzTxObj memory _lzTxParams) external view override returns (uint256, uint256)
+    ]"#,
+);
+abigen!(
+    Bridge,
+    r#"[
+        function swapAndBridge(uint amountIn, uint amountOutMin, uint16 dstChainId, address to, address payable refundAddress, address zroPaymentAddress, bytes calldata adapterParams) external payable
+    ]"#,
+);
+
+#[derive(Debug, Clone)]
+enum NoneError {
+    Create,
+}
+
+impl fmt::Display for NoneError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "receipt not found")
+    }
+}
+
+impl Error for NoneError {
+    fn description(&self) -> &str {
+        match *self {
+            NoneError::Create => "None Error",
+        }
+    }
+
+    fn cause(&self) -> Option<&dyn Error> {
+        match *self {
+            NoneError::Create => None,
+        }
+    }
+}
+
+pub type Receivers = HashMap<H160, H160>;
+pub type SignWallets = Vec<Wallet<SigningKey>>;
+pub const RANDOM_MIN: u32 = 30;
+pub const RANDOM_MAX: u32 = 60;
+pub const RANDOM_ETH_MIN: f64 = 0.0008;
+pub const RANDOM_ETH_MAX: f64 = 0.0009;
+pub const RPC: &str = "https://arb-mainnet.g.alchemy.com/v2/a3gddyg-QZsrorLULTsvQACmRtXb-exh";
+
+#[tokio::main]
+async fn main() {
+    log("Начало работы!".to_string(), None);
+    let wallets = match read_privates("./privates.txt") {
+        Ok(wallets) => wallets,
+        Err(err) => {
+            log(format!("Не удалось прочитать приватники: {:?}", err), None);
+            process::exit(0x0100);
+        }
+    };
+    retry(wallets).await;
+}
+
+async fn send_testnet(wallet: &Wallet<SigningKey>) -> Result<(), Box<dyn Error>> {
+    let client = Provider::<Http>::try_from(RPC)?;
+    let client = Arc::new(client);
+
+    let quoter_address = "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6".parse::<Address>()?;
+    let quote = Quoter::new(quoter_address, Arc::clone(&client));
+    let token_in = "0x82af49447d8a07e3bd95bd0d56f35241523fbab1".parse::<Address>()?;
+    let token_out = "0xdd69db25f6d620a7bad3023c5d32761d353d3de9".parse::<Address>()?;
+    let fee = 0xbb8;
+    let mut rng = Pcg32::from_entropy();
+    let amount = rng.gen_range(RANDOM_ETH_MIN..RANDOM_ETH_MAX);
+    log(
+        format!(
+            "Отправка в Görli {} {}..",
+            amount.to_string().bold(),
+            "ETH".to_string().bold()
+        ),
+        Some(wallet.address()),
+    );
+    let amount_in = parse_ether(amount).unwrap();
+    let sqrt_price_limit_x96 = U256::from_str("0").unwrap();
+    let amount_out = quote
+        .quote_exact_input_single(token_in, token_out, fee, amount_in, sqrt_price_limit_x96)
+        .call()
+        .await?;
+    log(
+        format!(
+            "Quoter: {} {}",
+            format_ether_to_float(&amount_out).to_string().bold(),
+            "GETH".to_string().bold()
+        ),
+        Some(wallet.address()),
+    );
+
+    let router_address = "0x53Bf833A5d6c4ddA888F69c22C88C9f356a41614".parse::<Address>()?;
+    let router = Router::new(router_address, Arc::clone(&client));
+    let dst_chain_id: u16 = 110;
+    let function_type: u8 = 1;
+    let transfer_and_call_payload: Bytes = Bytes::from_str("0x").unwrap();
+    let address_str = Token::Address(wallet.address()).to_string();
+    let bytes = Bytes::from_str(address_str.as_str()).unwrap();
+    let lz_tx_params = lzTxObj {
+        dst_gas_for_call: U256::from_str("0").unwrap(),
+        dst_native_amount: U256::from_str("0").unwrap(),
+        dst_native_addr: bytes.clone(),
+    };
+    let (router_fee, _) = router
+        .quote_layer_zero_fee(
+            dst_chain_id,
+            function_type,
+            bytes.clone(),
+            transfer_and_call_payload,
+            lz_tx_params,
+        )
+        .call()
+        .await?;
+    log(
+        format!(
+            "Router fee: {} {}",
+            format_ether_to_float(&router_fee).to_string().bold(),
+            "ETH".to_string().bold()
+        ),
+        Some(wallet.address()),
+    );
+
+    let amount_out_min = amount_out * U256::from(94) / U256::from(100);
+    let bridge_address = "0x0A9f824C05A74F577A536A8A0c673183a872Dff4".parse::<Address>()?;
+    let bridge = Bridge::new(bridge_address, Arc::clone(&client));
+    let dst_chain_id: u16 = 154;
+    let zro_payment_address = "0x0000000000000000000000000000000000000000".parse::<Address>()?;
+    let adapter_params: Bytes = Bytes::from_str("0x").unwrap();
+    let bridge_call = bridge.swap_and_bridge(
+        amount_in,
+        amount_out_min,
+        dst_chain_id,
+        wallet.address(),
+        wallet.address(),
+        zro_payment_address,
+        adapter_params,
+    );
+    let provider = Arc::clone(&client);
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let mut tx2: TypedTransaction = build_tx(
+        wallet.address(),
+        bridge_call.tx.to().unwrap().clone(),
+        amount_in + router_fee,
+        bridge_call.tx.data().cloned(),
+        provider
+            .get_transaction_count(wallet.address(), None)
+            .await
+            .unwrap(),
+        U64::from(provider.get_chainid().await.unwrap().as_u64()),
+        U256::from_str("2000000").unwrap(),
+        gas_price,
+        gas_price,
+    );
+    let gas = provider.estimate_gas(&tx2, None).await;
+    if gas.is_err() {
+        return Err(gas.err().unwrap().into());
+    }
+    tx2.set_gas(gas.unwrap());
+    let signed_result = wallet.sign_transaction(&tx2).await;
+    if signed_result.is_err() {
+        return Err(signed_result.err().unwrap().into());
+    }
+    let signed = signed_result.unwrap();
+    let hash_result = client.send_raw_transaction(tx2.rlp_signed(&signed)).await;
+    if hash_result.is_err() {
+        return Err(hash_result.err().unwrap().into());
+    }
+    let hash = hash_result.unwrap();
+    log(
+        format!("https://arbiscan.io/tx/{:?}", hash.tx_hash())
+            .underline()
+            .to_string(),
+        Some(wallet.address()),
+    );
+    let receipt_result = hash.await;
+    if receipt_result.is_err() {
+        return Err(receipt_result.err().unwrap().into());
+    }
+    let receipt_opt = receipt_result.unwrap();
+    if receipt_opt.is_none() {
+        return Err(NoneError::Create.into());
+    }
+    let receipt = receipt_opt.unwrap();
+    if receipt.status.unwrap() == 1.into() {
+        log(
+            "Транзакция подтверждена!".to_string(),
+            Some(wallet.address()),
+        );
+    } else {
+        log(
+            "Ошибка при подтверждении транзакции:".to_string(),
+            Some(wallet.address()),
+        );
+        println!("{:#?}", receipt);
+    }
+    Ok(())
+}
+
+async fn retry(wallets: Vec<Wallet<SigningKey>>) {
+    const N_ATTEMPTS: u8 = 3;
+    for wallet in wallets {
+        for _ in 0..N_ATTEMPTS {
+            match send_testnet(&wallet).await {
+                Ok(()) => {
+                    sleeping(None).await;
+                }
+                Err(e) => {
+                    sleeping(Some(1)).await;
+                    error(e.as_ref());
+                }
+            }
+        }
+    }
+}
+
+fn build_tx(
+    from: H160,
+    to: NameOrAddress,
+    value: U256,
+    data: Option<Bytes>,
+    nonce: U256,
+    chain_id: U64,
+    gas: U256,
+    max_priority_fee_per_gas: U256,
+    max_fee_per_gas: U256,
+) -> TypedTransaction {
+    TypedTransaction::Eip1559(Eip1559TransactionRequest {
+        from: Some(from),
+        to: Some(to),
+        value: Some(value),
+        data: data,
+        nonce: Some(nonce),
+        chain_id: Some(chain_id),
+        access_list: AccessList::default(),
+        gas: Some(gas),
+        max_priority_fee_per_gas: Some(max_priority_fee_per_gas),
+        max_fee_per_gas: Some(max_fee_per_gas),
+    })
+}
+
+fn format_ether_to_float(value: &U256) -> f64 {
+    value.as_u128() as f64 / 1_000_000_000_000_000_000.0
+}
+
+fn from_private(raw: &str) -> Result<Wallet<SigningKey>, WalletError> {
+    Wallet::from_str(raw).map_err(|err| err.into())
+}
+
+fn read_privates(path: &str) -> Result<SignWallets, WalletError> {
+    let content = std::fs::read_to_string(path)?;
+
+    let wallets = content
+        .split('\n')
+        .flat_map(|line| {
+            let line = line.trim();
+            let splitted = line.split(':').collect::<Vec<&str>>();
+            if splitted.is_empty() {
+                return Err("invalid private key".to_string());
+            }
+
+            let credentials = splitted[0].trim();
+
+            let wallet: Result<Wallet<SigningKey>, _> = from_private(credentials);
+
+            match wallet {
+                Ok(wallet) => Ok(wallet),
+                Err(err) => Err(err.to_string()),
+            }
+        })
+        .collect();
+
+    Ok(wallets)
+}
+
+fn error(e: &dyn Error) {
+    println!("{}", "[ERROR]:".to_string().bold().red());
+    println!("{:#?}", e);
+}
+
+fn log(text: String, address: Option<Address>) {
+    println!(
+        "{}{}{}{}",
+        "Testnet Bridge => ".bold(),
+        if address.is_some() {
+            format!("{:?}", address.unwrap()).blue()
+        } else {
+            "".to_string().black()
+        },
+        if address.is_some() { ": " } else { "" },
+        text
+    );
+}
+
+async fn sleeping(time: Option<u64>) {
+    let sleep_time: u64;
+    match time {
+        Some(t) => sleep_time = t,
+        None => {
+            let mut rng = Pcg32::from_entropy();
+            sleep_time = u64::from(rng.gen_range(RANDOM_MIN..RANDOM_MAX));
+        }
+    }
+    log(
+        format!("Задержка {}{}..", sleep_time.to_string().bold(), "с"),
+        None,
+    );
+    sleep(Duration::from_millis(sleep_time * 1000)).await;
+}

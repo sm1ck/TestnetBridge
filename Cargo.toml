@@ -1,0 +1,10 @@
+[package]
+name = "testnet_bridge"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+tokio = { version = "1.27.0", features = ["full"] }
+ethers = { version = "2.0.2", features = ["abigen", "ws", "rustls"] }
+colored = "2.0.0"
+k256 = "0.13.1"
+rand_pcg = "0.3.1"
