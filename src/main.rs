@@ -165,17 +165,28 @@ async fn send_testnet(wallet: &Wallet<SigningKey>) -> Result<(), Box<dyn Error>>
         adapter_params,
     );
     let provider = Arc::clone(&client);
-    let gas_price = provider.get_gas_price().await.unwrap();
+    let gas_price_result = provider.get_gas_price().await;
+    if gas_price_result.is_err() {
+        return Err(gas_price_result.err().unwrap().into());
+    }
+    let gas_price = gas_price_result.unwrap();
+    let nonce_result = provider.get_transaction_count(wallet.address(), None).await;
+    if nonce_result.is_err() {
+        return Err(nonce_result.err().unwrap().into());
+    }
+    let chain_id_result = provider.get_chainid().await;
+    if chain_id_result.is_err() {
+        return Err(chain_id_result.err().unwrap().into());
+    }
+    let chain_id = U64::from(chain_id_result.unwrap().as_u64());
+    let nonce = nonce_result.unwrap();
     let mut tx2: TypedTransaction = build_tx(
         wallet.address(),
         bridge_call.tx.to().unwrap().clone(),
         amount_in + router_fee,
         bridge_call.tx.data().cloned(),
-        provider
-            .get_transaction_count(wallet.address(), None)
-            .await
-            .unwrap(),
-        U64::from(provider.get_chainid().await.unwrap().as_u64()),
+        nonce,
+        chain_id,
         U256::from_str("2000000").unwrap(),
         gas_price,
         gas_price,
