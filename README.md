@@ -4,6 +4,12 @@
 
 # Установка
 
+## Установка Rust и Cargo
+
+Установите необходимое ПО по ссылке: https://doc.rust-lang.org/cargo/getting-started/installation.html
+
+## Установка скрипта
+
 ```
 git clone https://github.com/hodlmod/testnet_bridge.git
 cd testnet_bridge
