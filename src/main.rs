@@ -62,6 +62,16 @@ impl Error for NoneError {
         }
     }
 }
+pub struct ChainBook {
+    quoter: Address,
+    router: Address,
+    bridge: Address,
+    token_in: Address,
+    token_out: Address,
+    zro: Address,
+    scan: String,
+    pre_defined_gas: U256,
+}
 
 pub type Receivers = HashMap<H160, H160>;
 pub type SignWallets = Vec<Wallet<SigningKey>>;
@@ -82,16 +92,38 @@ async fn main() {
         }
     };
     retry(wallets).await;
+    log("Завершение работы..".to_string(), None);
 }
 
 async fn send_testnet(wallet: &Wallet<SigningKey>) -> Result<(), Box<dyn Error>> {
     let client = Provider::<Http>::try_from(RPC)?;
     let client = Arc::new(client);
-
-    let quoter_address = "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6".parse::<Address>()?;
+    let book: ChainBook = ChainBook {
+        quoter: "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
+            .parse::<Address>()
+            .unwrap(),
+        router: "0x53Bf833A5d6c4ddA888F69c22C88C9f356a41614"
+            .parse::<Address>()
+            .unwrap(),
+        bridge: "0x0A9f824C05A74F577A536A8A0c673183a872Dff4"
+            .parse::<Address>()
+            .unwrap(),
+        token_in: "0x82af49447d8a07e3bd95bd0d56f35241523fbab1"
+            .parse::<Address>()
+            .unwrap(),
+        token_out: "0xdd69db25f6d620a7bad3023c5d32761d353d3de9"
+            .parse::<Address>()
+            .unwrap(),
+        zro: "0x0000000000000000000000000000000000000000"
+            .parse::<Address>()
+            .unwrap(),
+        scan: String::from("https://arbiscan.io/"),
+        pre_defined_gas: U256::from_str("2000000").unwrap(),
+    };
+    let quoter_address = book.quoter.clone();
     let quote = Quoter::new(quoter_address, Arc::clone(&client));
-    let token_in = "0x82af49447d8a07e3bd95bd0d56f35241523fbab1".parse::<Address>()?;
-    let token_out = "0xdd69db25f6d620a7bad3023c5d32761d353d3de9".parse::<Address>()?;
+    let token_in = book.token_in.clone();
+    let token_out = book.token_out.clone();
     let fee = 0xbb8;
     let mut rng = Pcg32::from_entropy();
     let amount = rng.gen_range(RANDOM_ETH_MIN..RANDOM_ETH_MAX);
@@ -118,7 +150,7 @@ async fn send_testnet(wallet: &Wallet<SigningKey>) -> Result<(), Box<dyn Error>>
         Some(wallet.address()),
     );
 
-    let router_address = "0x53Bf833A5d6c4ddA888F69c22C88C9f356a41614".parse::<Address>()?;
+    let router_address = book.router.clone();
     let router = Router::new(router_address, Arc::clone(&client));
     let dst_chain_id: u16 = 110;
     let function_type: u8 = 1;
@@ -150,10 +182,10 @@ async fn send_testnet(wallet: &Wallet<SigningKey>) -> Result<(), Box<dyn Error>>
     );
 
     let amount_out_min = amount_out * U256::from(94) / U256::from(100);
-    let bridge_address = "0x0A9f824C05A74F577A536A8A0c673183a872Dff4".parse::<Address>()?;
+    let bridge_address = book.bridge.clone();
     let bridge = Bridge::new(bridge_address, Arc::clone(&client));
     let dst_chain_id: u16 = 154;
-    let zro_payment_address = "0x0000000000000000000000000000000000000000".parse::<Address>()?;
+    let zro_payment_address = book.zro.clone();
     let adapter_params: Bytes = Bytes::from_str("0x").unwrap();
     let bridge_call = bridge.swap_and_bridge(
         amount_in,
@@ -187,7 +219,7 @@ async fn send_testnet(wallet: &Wallet<SigningKey>) -> Result<(), Box<dyn Error>>
         bridge_call.tx.data().cloned(),
         nonce,
         chain_id,
-        U256::from_str("2000000").unwrap(),
+        book.pre_defined_gas.clone(),
         gas_price,
         gas_price,
     );
@@ -207,7 +239,7 @@ async fn send_testnet(wallet: &Wallet<SigningKey>) -> Result<(), Box<dyn Error>>
     }
     let hash = hash_result.unwrap();
     log(
-        format!("https://arbiscan.io/tx/{:?}", hash.tx_hash())
+        format!("{}tx/{:?}", book.scan.clone(), hash.tx_hash())
             .underline()
             .to_string(),
         Some(wallet.address()),
@@ -243,6 +275,7 @@ async fn retry(wallets: Vec<Wallet<SigningKey>>) {
             match send_testnet(&wallet).await {
                 Ok(()) => {
                     sleeping(None).await;
+                    break;
                 }
                 Err(e) => {
                     sleeping(Some(1)).await;
