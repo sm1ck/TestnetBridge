@@ -1,6 +1,6 @@
 # Testnet Bridge
 
-Простая реализация LayerZero Testnet Bridge на языке Rust в целях изучения новго языка.
+Простая реализация LayerZero Testnet Bridge на языке Rust в целях изучения нового языка.
 
 # Установка
 
