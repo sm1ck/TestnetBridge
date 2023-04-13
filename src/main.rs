@@ -11,10 +11,10 @@ use rand::Rng;
 use rand::SeedableRng;
 use rand_pcg::Pcg32;
 use std::error::Error;
-use std::fmt;
 use std::process;
 use std::str::FromStr;
 use std::sync::Arc;
+use thiserror::Error;
 use tokio::time::{sleep, Duration};
 
 abigen!(
@@ -37,29 +37,10 @@ abigen!(
     ]"#,
 );
 
-#[derive(Debug, Clone)]
-enum NoneError {
+#[derive(Error, Debug)]
+pub enum NoneError {
+    #[error("value of receipt is none")]
     Create,
-}
-
-impl fmt::Display for NoneError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "receipt not found")
-    }
-}
-
-impl Error for NoneError {
-    fn description(&self) -> &str {
-        match *self {
-            NoneError::Create => "None Error",
-        }
-    }
-
-    fn cause(&self) -> Option<&dyn Error> {
-        match *self {
-            NoneError::Create => None,
-        }
-    }
 }
 pub struct ChainBook {
     quoter: Address,

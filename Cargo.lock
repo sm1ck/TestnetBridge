@@ -2970,6 +2970,7 @@ dependencies = [
  "ethers",
  "k256",
  "rand_pcg",
+ "thiserror",
  "tokio",
 ]
 
