@@ -77,7 +77,7 @@ pub const RANDOM_MIN: u32 = 30;
 pub const RANDOM_MAX: u32 = 60;
 pub const RANDOM_ETH_MIN: f64 = 0.0008;
 pub const RANDOM_ETH_MAX: f64 = 0.0009;
-pub const RPC: &str = "https://arb-mainnet.g.alchemy.com/v2/a3gddyg-QZsrorLULTsvQACmRtXb-exh";
+pub const RPC: &str = "https://arb1.arbitrum.io/rpc";
 
 #[tokio::main]
 async fn main() {
