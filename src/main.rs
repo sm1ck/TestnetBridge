@@ -10,7 +10,6 @@ use k256::ecdsa::SigningKey;
 use rand::Rng;
 use rand::SeedableRng;
 use rand_pcg::Pcg32;
-use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::process;
@@ -73,13 +72,12 @@ pub struct ChainBook {
     pre_defined_gas: U256,
 }
 
-pub type Receivers = HashMap<H160, H160>;
 pub type SignWallets = Vec<Wallet<SigningKey>>;
 pub const RANDOM_MIN: u32 = 30;
 pub const RANDOM_MAX: u32 = 60;
 pub const RANDOM_ETH_MIN: f64 = 0.0008;
 pub const RANDOM_ETH_MAX: f64 = 0.0009;
-pub const RPC: &str = "https://arb1.arbitrum.io/rpc";
+pub const RPC: &str = "https://arb-mainnet.g.alchemy.com/v2/a3gddyg-QZsrorLULTsvQACmRtXb-exh";
 
 #[tokio::main]
 async fn main() {
@@ -257,8 +255,8 @@ async fn retry<'a>(wallets: Vec<Wallet<SigningKey>>, book: &'a ChainBook) {
                     break;
                 }
                 Err(e) => {
-                    sleeping(Some(1)).await;
                     error(e.as_ref());
+                    sleeping(Some(1)).await;
                 }
             }
         }
