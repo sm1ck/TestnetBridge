@@ -313,10 +313,7 @@ fn log(text: String, address: Option<Address>) {
     println!(
         "{}{}{}{}",
         "Testnet Bridge => ".bold(),
-        address.map_or_else(
-            || "".to_string().black(),
-            |addr| format!("{:?}", addr).blue()
-        ),
+        address.map_or("".to_string().black(), |addr| format!("{:?}", addr).blue()),
         address.map_or_else(|| "", |_| ": "),
         text
     );
