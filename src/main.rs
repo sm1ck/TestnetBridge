@@ -197,21 +197,11 @@ async fn send_testnet(wallet: &Wallet<SigningKey>, book: &ChainBook) -> Result<(
         adapter_params,
     );
     let provider = Arc::clone(&client);
-    let gas_price_result = provider.get_gas_price().await;
-    if gas_price_result.is_err() {
-        return Err(gas_price_result.err().unwrap().into());
-    }
-    let gas_price = gas_price_result.unwrap();
-    let nonce_result = provider.get_transaction_count(wallet.address(), None).await;
-    if nonce_result.is_err() {
-        return Err(nonce_result.err().unwrap().into());
-    }
-    let chain_id_result = provider.get_chainid().await;
-    if chain_id_result.is_err() {
-        return Err(chain_id_result.err().unwrap().into());
-    }
-    let chain_id = U64::from(chain_id_result.unwrap().as_u64());
-    let nonce = nonce_result.unwrap();
+    let gas_price = provider.get_gas_price().await?;
+    let nonce = provider
+        .get_transaction_count(wallet.address(), None)
+        .await?;
+    let chain_id = U64::from(provider.get_chainid().await?.as_u64());
     let mut tx2: TypedTransaction = build_tx(
         wallet.address(),
         bridge_call.tx.to().unwrap().clone(),
@@ -223,32 +213,17 @@ async fn send_testnet(wallet: &Wallet<SigningKey>, book: &ChainBook) -> Result<(
         gas_price,
         gas_price,
     );
-    let gas = provider.estimate_gas(&tx2, None).await;
-    if gas.is_err() {
-        return Err(gas.err().unwrap().into());
-    }
-    tx2.set_gas(gas.unwrap());
-    let signed_result = wallet.sign_transaction(&tx2).await;
-    if signed_result.is_err() {
-        return Err(signed_result.err().unwrap().into());
-    }
-    let signed = signed_result.unwrap();
-    let hash_result = client.send_raw_transaction(tx2.rlp_signed(&signed)).await;
-    if hash_result.is_err() {
-        return Err(hash_result.err().unwrap().into());
-    }
-    let hash = hash_result.unwrap();
+    let gas = provider.estimate_gas(&tx2, None).await?;
+    tx2.set_gas(gas);
+    let signed = wallet.sign_transaction(&tx2).await?;
+    let hash = client.send_raw_transaction(tx2.rlp_signed(&signed)).await?;
     log(
         format!("{}tx/{:?}", book.scan.clone(), hash.tx_hash())
             .underline()
             .to_string(),
         Some(wallet.address()),
     );
-    let receipt_result = hash.await;
-    if receipt_result.is_err() {
-        return Err(receipt_result.err().unwrap().into());
-    }
-    let receipt_opt = receipt_result.unwrap();
+    let receipt_opt = hash.await?;
     if receipt_opt.is_none() {
         return Err(NoneError::Create.into());
     }
