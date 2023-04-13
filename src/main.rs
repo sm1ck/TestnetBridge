@@ -354,25 +354,23 @@ fn log(text: String, address: Option<Address>) {
     println!(
         "{}{}{}{}",
         "Testnet Bridge => ".bold(),
-        if address.is_some() {
-            format!("{:?}", address.unwrap()).blue()
-        } else {
-            "".to_string().black()
-        },
-        if address.is_some() { ": " } else { "" },
+        address.map_or_else(
+            || "".to_string().black(),
+            |addr| format!("{:?}", addr).blue()
+        ),
+        address.map_or_else(|| "", |_| ": "),
         text
     );
 }
 
 async fn sleeping(time: Option<u64>) {
-    let sleep_time: u64;
-    match time {
-        Some(t) => sleep_time = t,
-        None => {
+    let sleep_time: u64 = time.map_or_else(
+        || {
             let mut rng = Pcg32::from_entropy();
-            sleep_time = u64::from(rng.gen_range(RANDOM_MIN..RANDOM_MAX));
-        }
-    }
+            u64::from(rng.gen_range(RANDOM_MIN..RANDOM_MAX))
+        },
+        |t| t,
+    );
     log(
         format!("Задержка {}{}..", sleep_time.to_string().bold(), "с"),
         None,
