@@ -230,7 +230,7 @@ async fn retry<'a>(wallets: Vec<Wallet<SigningKey>>, book: &'a ChainBook) {
     let mut count = 0;
     let size = &wallets.len();
     for wallet in wallets {
-        for _ in 0..N_ATTEMPTS {
+        for i in 0..N_ATTEMPTS {
             match send_testnet(&wallet, &book).await {
                 Ok(()) => {
                     if count < size - 1 {
@@ -240,6 +240,15 @@ async fn retry<'a>(wallets: Vec<Wallet<SigningKey>>, book: &'a ChainBook) {
                 }
                 Err(e) => {
                     error(e.as_ref());
+                    log(
+                        format!(
+                            "Повторная отправка: {}{}{}",
+                            (i + 1).to_string().green().bold(),
+                            "/".to_string().bold(),
+                            N_ATTEMPTS.to_string().red().bold()
+                        ),
+                        Some(wallet.address()),
+                    );
                     sleeping(Some(1)).await;
                 }
             }
