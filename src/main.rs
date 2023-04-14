@@ -38,9 +38,11 @@ abigen!(
 );
 
 #[derive(Error, Debug)]
-pub enum NoneError {
+pub enum TxError {
     #[error("value of receipt is none")]
-    Create,
+    NoneError,
+    #[error("Tx reverted for some reason")]
+    TxRevertError,
 }
 pub struct ChainBook {
     quoter: Address,
@@ -204,7 +206,7 @@ async fn send_testnet(wallet: &Wallet<SigningKey>, book: &ChainBook) -> Result<(
     );
     let receipt_opt = hash.await?;
     if receipt_opt.is_none() {
-        return Err(NoneError::Create.into());
+        return Err(TxError::NoneError.into());
     }
     let receipt = receipt_opt.unwrap();
     if receipt.status.unwrap() == 1.into() {
@@ -218,12 +220,13 @@ async fn send_testnet(wallet: &Wallet<SigningKey>, book: &ChainBook) -> Result<(
             Some(wallet.address()),
         );
         println!("{:#?}", receipt);
+        return Err(TxError::TxRevertError.into());
     }
     Ok(())
 }
 
 async fn retry<'a>(wallets: Vec<Wallet<SigningKey>>, book: &'a ChainBook) {
-    const N_ATTEMPTS: u8 = 3;
+    const N_ATTEMPTS: u8 = 10;
     let mut count = 0;
     let size = &wallets.len();
     for wallet in wallets {
