@@ -145,7 +145,7 @@ async fn send_testnet(wallet: &Wallet<SigningKey>, book: &ChainBook) -> Result<(
         .quote_layer_zero_fee(
             dst_chain_id,
             function_type,
-            bytes.clone(),
+            bytes,
             transfer_and_call_payload,
             lz_tx_params,
         )
