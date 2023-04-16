@@ -343,5 +343,5 @@ async fn sleeping(time: Option<u64>) {
         format!("Задержка {}{}..", sleep_time.to_string().bold(), "с"),
         None,
     );
-    sleep(Duration::from_millis(sleep_time * 1000)).await;
+    sleep(Duration::from_secs(sleep_time)).await;
 }
