@@ -1,4 +1,5 @@
 use colored::Colorize;
+use ethers::abi::Token;
 use ethers::contract::abigen;
 use ethers::prelude::*;
 use ethers::types::transaction::eip2718::TypedTransaction;
@@ -24,6 +25,13 @@ abigen!(
     ]"#,
 );
 abigen!(
+    Router,
+    r#"[
+        struct lzTxObj { uint256 dstGasForCall; uint256 dstNativeAmount; bytes dstNativeAddr; }
+        function quoteLayerZeroFee(uint16 _dstChainId, uint8 _functionType, bytes calldata _toAddress, bytes calldata _transferAndCallPayload, Router.lzTxObj memory _lzTxParams) external view override returns (uint256, uint256)
+    ]"#,
+);
+abigen!(
     Bridge,
     r#"[
         function swapAndBridge(uint amountIn, uint amountOutMin, uint16 dstChainId, address to, address payable refundAddress, address zroPaymentAddress, bytes calldata adapterParams) external payable
@@ -39,6 +47,7 @@ pub enum TxError {
 }
 pub struct ChainBook {
     quoter: Address,
+    router: Address,
     bridge: Address,
     token_in: Address,
     token_out: Address,
@@ -61,6 +70,9 @@ async fn main() {
         quoter: "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
             .parse::<Address>()
             .unwrap(),
+        router: "0x53Bf833A5d6c4ddA888F69c22C88C9f356a41614"
+            .parse::<Address>()
+            .unwrap(),
         bridge: "0x0A9f824C05A74F577A536A8A0c673183a872Dff4"
             .parse::<Address>()
             .unwrap(),
@@ -76,7 +88,10 @@ async fn main() {
         scan: String::from("https://arbiscan.io/"),
         pre_defined_gas: U256::from_str("200000").unwrap(),
     };
-    let errors: Vec<String> = vec!["insufficient funds for gas".to_string()];
+    let errors: Vec<String> = vec![
+        "insufficient funds".to_string(),
+        "not enough native".to_string(),
+    ];
     log("Начало работы!".to_string(), None);
     let mut wallets = match read_privates("./privates.txt") {
         Ok(wallets) => wallets,
@@ -125,6 +140,38 @@ async fn send_testnet(wallet: &Wallet<SigningKey>, book: &ChainBook) -> Result<(
         ),
         Some(wallet.address()),
     );
+
+    let router_address = book.router.clone();
+    let router = Router::new(router_address, Arc::clone(&client));
+    let dst_chain_id: u16 = 110;
+    let function_type: u8 = 1;
+    let transfer_and_call_payload: Bytes = Bytes::from_str("0x").unwrap();
+    let address_str = Token::Address(wallet.address()).to_string();
+    let bytes = Bytes::from_str(address_str.as_str()).unwrap();
+    let lz_tx_params = lzTxObj {
+        dst_gas_for_call: U256::from_str("0").unwrap(),
+        dst_native_amount: U256::from_str("0").unwrap(),
+        dst_native_addr: bytes.clone(),
+    };
+    let (router_fee, _) = router
+        .quote_layer_zero_fee(
+            dst_chain_id,
+            function_type,
+            bytes,
+            transfer_and_call_payload,
+            lz_tx_params,
+        )
+        .call()
+        .await?;
+    log(
+        format!(
+            "Router fee: {} {}",
+            format_ether_to_float(&router_fee).to_string().bold(),
+            "ETH".to_string().bold()
+        ),
+        Some(wallet.address()),
+    );
+
     let amount_out_min = amount_out * U256::from(94) / U256::from(100);
     let bridge_address = book.bridge.clone();
     let bridge = Bridge::new(bridge_address, Arc::clone(&client));
@@ -146,11 +193,10 @@ async fn send_testnet(wallet: &Wallet<SigningKey>, book: &ChainBook) -> Result<(
         .get_transaction_count(wallet.address(), None)
         .await?;
     let chain_id = U64::from(provider.get_chainid().await?.as_u64());
-    let amount_in_tx = amount_in * U256::from(120) / U256::from(100);
     let mut tx2: TypedTransaction = build_tx(
         wallet.address(),
         bridge_call.tx.to().unwrap().clone(),
-        amount_in_tx,
+        amount_in + router_fee,
         bridge_call.tx.data().cloned(),
         nonce,
         chain_id,
