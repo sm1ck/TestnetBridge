@@ -1,5 +1,4 @@
 use colored::Colorize;
-use ethers::abi::Token;
 use ethers::contract::abigen;
 use ethers::prelude::*;
 use ethers::types::transaction::eip2718::TypedTransaction;
@@ -7,6 +6,7 @@ use ethers::types::transaction::eip2930::AccessList;
 use ethers::types::U256;
 use ethers::utils::parse_ether;
 use k256::ecdsa::SigningKey;
+use rand::seq::SliceRandom;
 use rand::Rng;
 use rand::SeedableRng;
 use rand_pcg::Pcg32;
@@ -24,13 +24,6 @@ abigen!(
     ]"#,
 );
 abigen!(
-    Router,
-    r#"[
-        struct lzTxObj { uint256 dstGasForCall; uint256 dstNativeAmount; bytes dstNativeAddr; }
-        function quoteLayerZeroFee(uint16 _dstChainId, uint8 _functionType, bytes calldata _toAddress, bytes calldata _transferAndCallPayload, Router.lzTxObj memory _lzTxParams) external view override returns (uint256, uint256)
-    ]"#,
-);
-abigen!(
     Bridge,
     r#"[
         function swapAndBridge(uint amountIn, uint amountOutMin, uint16 dstChainId, address to, address payable refundAddress, address zroPaymentAddress, bytes calldata adapterParams) external payable
@@ -39,14 +32,13 @@ abigen!(
 
 #[derive(Error, Debug)]
 pub enum TxError {
-    #[error("value of receipt is none")]
+    #[error("Value of receipt is none")]
     NoneError,
     #[error("Tx reverted for some reason")]
     TxRevertError,
 }
 pub struct ChainBook {
     quoter: Address,
-    router: Address,
     bridge: Address,
     token_in: Address,
     token_out: Address,
@@ -57,18 +49,16 @@ pub struct ChainBook {
 
 pub type SignWallets = Vec<Wallet<SigningKey>>;
 pub const RANDOM_MIN: u32 = 30;
-pub const RANDOM_MAX: u32 = 60;
-pub const RANDOM_ETH_MIN: f64 = 0.0008;
-pub const RANDOM_ETH_MAX: f64 = 0.0009;
+pub const RANDOM_MAX: u32 = 600;
+pub const RANDOM_ETH_MIN: f64 = 0.0001;
+pub const RANDOM_ETH_MAX: f64 = 0.0002;
 pub const RPC: &str = "https://arb1.arbitrum.io/rpc";
+pub const IS_SHUFFLE: bool = true;
 
 #[tokio::main]
 async fn main() {
     let book: ChainBook = ChainBook {
         quoter: "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
-            .parse::<Address>()
-            .unwrap(),
-        router: "0x53Bf833A5d6c4ddA888F69c22C88C9f356a41614"
             .parse::<Address>()
             .unwrap(),
         bridge: "0x0A9f824C05A74F577A536A8A0c673183a872Dff4"
@@ -84,17 +74,22 @@ async fn main() {
             .parse::<Address>()
             .unwrap(),
         scan: String::from("https://arbiscan.io/"),
-        pre_defined_gas: U256::from_str("2000000").unwrap(),
+        pre_defined_gas: U256::from_str("200000").unwrap(),
     };
+    let errors: Vec<String> = vec!["insufficient funds for gas".to_string()];
     log("Начало работы!".to_string(), None);
-    let wallets = match read_privates("./privates.txt") {
+    let mut wallets = match read_privates("./privates.txt") {
         Ok(wallets) => wallets,
         Err(err) => {
             log(format!("Не удалось прочитать приватники: {:?}", err), None);
             process::exit(0x0100);
         }
     };
-    retry(wallets, &book).await;
+    if IS_SHUFFLE {
+        let mut rng = rand::thread_rng();
+        wallets.shuffle(&mut rng);
+    }
+    retry(wallets, &book, &errors).await;
     log("Завершение работы..".to_string(), None);
 }
 
@@ -130,38 +125,6 @@ async fn send_testnet(wallet: &Wallet<SigningKey>, book: &ChainBook) -> Result<(
         ),
         Some(wallet.address()),
     );
-
-    let router_address = book.router.clone();
-    let router = Router::new(router_address, Arc::clone(&client));
-    let dst_chain_id: u16 = 110;
-    let function_type: u8 = 1;
-    let transfer_and_call_payload: Bytes = Bytes::from_str("0x").unwrap();
-    let address_str = Token::Address(wallet.address()).to_string();
-    let bytes = Bytes::from_str(address_str.as_str()).unwrap();
-    let lz_tx_params = lzTxObj {
-        dst_gas_for_call: U256::from_str("0").unwrap(),
-        dst_native_amount: U256::from_str("0").unwrap(),
-        dst_native_addr: bytes.clone(),
-    };
-    let (router_fee, _) = router
-        .quote_layer_zero_fee(
-            dst_chain_id,
-            function_type,
-            bytes,
-            transfer_and_call_payload,
-            lz_tx_params,
-        )
-        .call()
-        .await?;
-    log(
-        format!(
-            "Router fee: {} {}",
-            format_ether_to_float(&router_fee).to_string().bold(),
-            "ETH".to_string().bold()
-        ),
-        Some(wallet.address()),
-    );
-
     let amount_out_min = amount_out * U256::from(94) / U256::from(100);
     let bridge_address = book.bridge.clone();
     let bridge = Bridge::new(bridge_address, Arc::clone(&client));
@@ -183,10 +146,11 @@ async fn send_testnet(wallet: &Wallet<SigningKey>, book: &ChainBook) -> Result<(
         .get_transaction_count(wallet.address(), None)
         .await?;
     let chain_id = U64::from(provider.get_chainid().await?.as_u64());
+    let amount_in_tx = amount_in * U256::from(120) / U256::from(100);
     let mut tx2: TypedTransaction = build_tx(
         wallet.address(),
         bridge_call.tx.to().unwrap().clone(),
-        amount_in + router_fee,
+        amount_in_tx,
         bridge_call.tx.data().cloned(),
         nonce,
         chain_id,
@@ -225,7 +189,7 @@ async fn send_testnet(wallet: &Wallet<SigningKey>, book: &ChainBook) -> Result<(
     Ok(())
 }
 
-async fn retry<'a>(wallets: Vec<Wallet<SigningKey>>, book: &'a ChainBook) {
+async fn retry<'a>(wallets: Vec<Wallet<SigningKey>>, book: &'a ChainBook, errors: &'a Vec<String>) {
     const N_ATTEMPTS: u8 = 10;
     let mut count = 0;
     let size = &wallets.len();
@@ -240,16 +204,25 @@ async fn retry<'a>(wallets: Vec<Wallet<SigningKey>>, book: &'a ChainBook) {
                 }
                 Err(e) => {
                     error(e.as_ref());
-                    log(
-                        format!(
-                            "Повторная отправка: {}{}{}",
-                            (i + 1).to_string().green().bold(),
-                            "/".to_string().bold(),
-                            N_ATTEMPTS.to_string().red().bold()
-                        ),
-                        Some(wallet.address()),
-                    );
-                    sleeping(Some(1)).await;
+                    let str_e = e.to_string();
+                    let find =
+                        errors
+                            .iter()
+                            .find_map(|s| if str_e.contains(s) { Some(s) } else { None });
+                    if find.is_none() {
+                        log(
+                            format!(
+                                "Повторная отправка: {}{}{}",
+                                (i + 1).to_string().green().bold(),
+                                "/".to_string().bold(),
+                                N_ATTEMPTS.to_string().red().bold()
+                            ),
+                            Some(wallet.address()),
+                        );
+                        sleeping(Some(1)).await;
+                    } else {
+                        break;
+                    }
                 }
             }
         }
