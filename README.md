@@ -8,7 +8,7 @@
 
 - Добавлен параметр IS_SHUFFLE, по умолчанию true, рандомно сортирует кошельки при запуске.
 
-- Не делаем ретраи при ошибке insufficient funds for gas,
+- Не делаем ретраи при ошибке insufficient funds и not enough native
 
 # Установка
 
