@@ -96,7 +96,7 @@ async fn main() {
     let mut wallets = match read_privates("./privates.txt") {
         Ok(wallets) => wallets,
         Err(err) => {
-            log(format!("Не удалось прочитать приватники: {:?}", err), None);
+            log(format!("Не удалось прочитать приватники: {err:?}"), None);
             process::exit(0x0100);
         }
     };
@@ -229,7 +229,7 @@ async fn send_testnet(wallet: &Wallet<SigningKey>, book: &ChainBook) -> Result<(
             "Ошибка при подтверждении транзакции:".to_string(),
             Some(wallet.address()),
         );
-        println!("{:#?}", receipt);
+        println!("{receipt:#?}");
         return Err(TxError::TxRevertError.into());
     }
     Ok(())
@@ -251,10 +251,7 @@ async fn retry<'a>(wallets: Vec<Wallet<SigningKey>>, book: &'a ChainBook, errors
                 Err(e) => {
                     error(e.as_ref());
                     let str_e = e.to_string();
-                    let find =
-                        errors
-                            .iter()
-                            .find_map(|s| if str_e.contains(s) { Some(s) } else { None });
+                    let find = errors.iter().find(|&el| str_e.contains(el));
                     if find.is_none() {
                         log(
                             format!(
@@ -306,7 +303,7 @@ fn format_ether_to_float(value: &U256) -> f64 {
 }
 
 fn from_private(raw: &str) -> Result<Wallet<SigningKey>, WalletError> {
-    Wallet::from_str(raw).map_err(|err| err.into())
+    Wallet::from_str(raw)
 }
 
 fn read_privates(path: &str) -> Result<SignWallets, WalletError> {
@@ -337,14 +334,14 @@ fn read_privates(path: &str) -> Result<SignWallets, WalletError> {
 
 fn error(e: &dyn Error) {
     println!("{}", "[ERROR]:".to_string().bold().red());
-    println!("{:#?}", e);
+    println!("{e:#?}");
 }
 
 fn log(text: String, address: Option<Address>) {
     println!(
         "{}{}{}{}",
         "Testnet Bridge => ".bold(),
-        address.map_or("".to_string().black(), |addr| format!("{:?}", addr).blue()),
+        address.map_or("".to_string().black(), |addr| format!("{addr:?}").blue()),
         address.map_or_else(|| "", |_| ": "),
         text
     );
